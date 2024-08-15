@@ -9,36 +9,47 @@ namespace EventService
     public class EventService : MonoBehaviour
     {
         private const string EVENTS_KEY = "events";
+        private const float REQUEST_COOLDOWN = 2f;
+        private const int REQUEST_TIMEOUT = 5;
         private const long RESPONSE_CODE_OK = 200;
-        
+
         private readonly List<EventDTO> _bufferToWrite = new(100);
-        private readonly List<EventDTO> _bufferToSend = new(100);
+        private List<EventDTO> _bufferToSend = new(100);
         
         private string _serverUrl = "localhost:3000/api/events";
+        private float _requestCooldown;
         private bool _performingRequest;
+        
+        public void Construct(string serverUrl)
+        {
+            _serverUrl = serverUrl;
+        }
 
         private void Start()
         {
-            if (PlayerPrefs.HasKey(EVENTS_KEY))
-            {
-                var json = PlayerPrefs.GetString(EVENTS_KEY);
-                PlayerPrefs.DeleteKey(EVENTS_KEY);
-                // deserialize directly into buffer to send why not imo
-            }
+            TrySendEventsAfterUnpause();
         }
 
         private void Update()
         {
-            // just ticking timer and send request if previous request already finished
-            if (timer && not sending request rn)
+            if (_bufferToSend.Count == 0 && _bufferToWrite.Count == 0)
             {
-                _bufferToSend.AddRange(_bufferToWrite);
-                _bufferToWrite.Clear();
-                
-                _performingRequest = true;
-                
-                TrySendEvents().Forget();
+                return;
             }
+            
+            _requestCooldown -= Time.deltaTime;
+
+            if (_requestCooldown > 0 || _performingRequest == true)
+            {
+                return;
+            }
+            
+            _bufferToSend.AddRange(_bufferToWrite);
+            _bufferToWrite.Clear();
+                
+            _performingRequest = true;
+                
+            TrySendEvents().Forget();
         }
 
 #if UNITY_ANDROID
@@ -51,7 +62,7 @@ namespace EventService
             }
             else
             {
-                TrySendEventsAfterUnpause().Forget();
+                TrySendEventsAfterUnpause();
             }
         }
 #elif UNITY_WEBGL
@@ -62,9 +73,27 @@ namespace EventService
         }
 #endif
 
-        public void Init(string serverUrl)
+        public void TrackEvent(string type, string data)
         {
-            _serverUrl = serverUrl;
+            if (_bufferToWrite.Count == 0)
+            {
+                _requestCooldown = REQUEST_COOLDOWN;
+            }
+            
+            _bufferToWrite.Add(new EventDTO(type, data));
+        }
+
+        private void TrySendEventsAfterUnpause()
+        {
+            if (!PlayerPrefs.HasKey(EVENTS_KEY))
+            {
+                return;
+            }
+            
+            var json = PlayerPrefs.GetString(EVENTS_KEY);
+            PlayerPrefs.DeleteKey(EVENTS_KEY);
+            _bufferToSend = JsonConvert.DeserializeObject<List<EventDTO>>(json);
+            TrySendEvents().Forget();
         }
 
         private async UniTask TrySendEvents()
@@ -72,6 +101,7 @@ namespace EventService
             var json = JsonConvert.SerializeObject(_bufferToSend);
 
             var webRequest = UnityWebRequest.Post(_serverUrl, json);
+            webRequest.timeout = REQUEST_TIMEOUT;
 
             await webRequest.SendWebRequest();
 
@@ -84,14 +114,22 @@ namespace EventService
 
         private void SaveEventsForLater()
         {
+            // better to add some kind of message id/hash when performing request
+            // so server can handle if we send the same message twice or so
+            // it can happen if we quit before getting code 200
+            
             if (_bufferToSend.Count == 0 && _bufferToWrite.Count == 0)
             {
-                PlayerPrefs.DeleteKey(EVENTS_KEY);
+                return;
             }
-            
+
             _bufferToSend.AddRange(_bufferToWrite);
-            var json = JsonConvert.SerializeObject(_bufferToSend);
             
+            var json = JsonConvert.SerializeObject(_bufferToSend);
+            PlayerPrefs.SetString(EVENTS_KEY, json);
+            
+            _bufferToSend.Clear();
+            _bufferToWrite.Clear();
         }
     }
 }

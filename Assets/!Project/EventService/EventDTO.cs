@@ -7,5 +7,11 @@ namespace EventService
     {
         public string type;
         public string data;
+
+        public EventDTO(string type, string data)
+        {
+            this.type = type;
+            this.data = data;
+        }
     }
 }
