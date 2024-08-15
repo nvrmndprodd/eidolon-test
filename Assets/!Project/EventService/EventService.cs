@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -44,10 +45,9 @@ namespace EventService
                 return;
             }
             
+            Debug.Log("Timer expired. Preparing to send events.");
             _bufferToSend.AddRange(_bufferToWrite);
             _bufferToWrite.Clear();
-                
-            _performingRequest = true;
                 
             TrySendEvents().Forget();
         }
@@ -73,13 +73,20 @@ namespace EventService
         }
 #endif
 
+        private void OnApplicationQuit()
+        {
+            SaveEventsForLater();
+        }
+
         public void TrackEvent(string type, string data)
         {
             if (_bufferToWrite.Count == 0)
             {
+                Debug.Log("Cooldown started");
                 _requestCooldown = REQUEST_COOLDOWN;
             }
             
+            Debug.Log($"Add type: {type} data: {data}");
             _bufferToWrite.Add(new EventDTO(type, data));
         }
 
@@ -87,6 +94,7 @@ namespace EventService
         {
             if (!PlayerPrefs.HasKey(EVENTS_KEY))
             {
+                Debug.Log("No events after unpause");
                 return;
             }
             
@@ -98,17 +106,34 @@ namespace EventService
 
         private async UniTask TrySendEvents()
         {
+            _performingRequest = true;
             var json = JsonConvert.SerializeObject(_bufferToSend);
+            Debug.Log($"Trying to send {_bufferToSend.Count} events. Message: {json}");
 
             var webRequest = UnityWebRequest.Post(_serverUrl, json);
             webRequest.timeout = REQUEST_TIMEOUT;
 
-            await webRequest.SendWebRequest();
-
-            if (webRequest.responseCode == RESPONSE_CODE_OK)
+            try
             {
-                _bufferToSend.Clear();
+                await webRequest.SendWebRequest();
+            }
+            catch (Exception e)
+            {
+                Debug.Log(e);
                 _performingRequest = false;
+            }
+            finally
+            {
+                Debug.Log($"responseCode: {webRequest.responseCode}");
+                
+                if (webRequest.responseCode == RESPONSE_CODE_OK || true)
+                {
+                    _bufferToSend.Clear();
+                    _performingRequest = false;
+                    Debug.Log("Web request successful");
+                }
+                
+                webRequest.Dispose();
             }
         }
 
@@ -120,6 +145,7 @@ namespace EventService
             
             if (_bufferToSend.Count == 0 && _bufferToWrite.Count == 0)
             {
+                Debug.Log("No events to save for later");
                 return;
             }
 
@@ -130,6 +156,7 @@ namespace EventService
             
             _bufferToSend.Clear();
             _bufferToWrite.Clear();
+            Debug.Log($"Saved {_bufferToSend.Count} events. Json: {json}");
         }
     }
 }
